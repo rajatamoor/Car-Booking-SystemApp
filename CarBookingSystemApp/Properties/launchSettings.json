@@ -1,0 +1,11 @@
+{
+  "ApiSettings": {
+    "BaseUrl": "https://localhost:7285" // Or whatever port your API actually uses
+  },
+  "profiles": {
+    "Windows Machine": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    }
+  }
+}

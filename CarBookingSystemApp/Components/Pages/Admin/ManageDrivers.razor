@@ -1,0 +1,305 @@
+﻿@page "/admin/managedrivers"
+
+@using CarBookingSystem.Domain
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.JSInterop
+
+@layout MainLayout
+
+@attribute [Authorize(Roles = "Admin")]
+
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject IJSRuntime JSRuntime
+
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3><i class="bi bi-person-badge me-2"></i> Manage Drivers</h3>
+        <button class="btn btn-success" @onclick="ShowAddDriverModal">
+            <i class="bi bi-plus-circle me-1"></i> Add New Driver
+        </button>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Driver List</h5>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading drivers...</p>
+                </div>
+            }
+            else if (drivers != null && drivers.Any())
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Phone</th>
+                                <th>License Number</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var driver in drivers)
+                            {
+                                <tr>
+                                    <td>@driver.Id</td>
+                                    <td>@driver.Name</td>
+                                    <td>@driver.Email</td>
+                                    <td>@(driver.Phone ?? "N/A")</td>
+                                    <td>@(driver.LicenseNumber ?? "N/A")</td>
+                                    <td>
+                                        <span class="badge @GetStatusBadge(driver.Status)">
+                                            @driver.Status
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary me-1"
+                                                @onclick="() => EditDriver(driver)">
+                                            <i class="bi bi-pencil"></i> Edit
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger"
+                                                @onclick="() => DeleteDriver(driver.Id)">
+                                            <i class="bi bi-trash"></i> Delete
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i> No drivers found.
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Driver Modal -->
+@if (showDriverModal)
+{
+    <div class="modal show d-block" tabindex="-1" role="dialog" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-person-plus me-1"></i>
+                        @(isEditing ? "Edit Driver" : "Add New Driver")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseDriverModal"></button>
+                </div>
+                <div class="modal-body">
+                    <form>
+                        <div class="mb-3">
+                            <label class="form-label">Full Name *</label>
+                            <input type="text" class="form-control" @bind="currentDriver.Name" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Email *</label>
+                            <input type="email" class="form-control" @bind="currentDriver.Email" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Phone</label>
+                            <input type="tel" class="form-control" @bind="currentDriver.Phone" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">License Number</label>
+                            <input type="text" class="form-control" @bind="currentDriver.LicenseNumber" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" @bind="currentDriver.Status">
+                                <option value="Active">Active</option>
+                                <option value="Inactive">Inactive</option>
+                                <option value="OnLeave">On Leave</option>
+                            </select>
+                        </div>
+                        @if (!isEditing)
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">Password *</label>
+                                <input type="password" class="form-control" @bind="newPassword" />
+                            </div>
+                        }
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseDriverModal">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveDriver">
+                        @(isEditing ? "Update" : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DriverDto> drivers = new();
+    private bool isLoading = true;
+    private bool showDriverModal = false;
+    private bool isEditing = false;
+    private DriverDto currentDriver = new();
+    private string newPassword = "";
+    private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDrivers();
+    }
+
+    private async Task LoadDrivers()
+    {
+        isLoading = true;
+        try
+        {
+            // Assuming you have an API endpoint for drivers
+            drivers = await Http.GetFromJsonAsync<List<DriverDto>>("api/admin/drivers") ?? new();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading drivers: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDriverModal()
+    {
+        currentDriver = new DriverDto
+        {
+            Status = "Active"
+        };
+        isEditing = false;
+        newPassword = "";
+        showDriverModal = true;
+    }
+
+    private void EditDriver(DriverDto driver)
+    {
+        currentDriver = new DriverDto
+        {
+            Id = driver.Id,
+            Name = driver.Name,
+            Email = driver.Email,
+            Phone = driver.Phone,
+            LicenseNumber = driver.LicenseNumber,
+            Status = driver.Status
+        };
+        isEditing = true;
+        showDriverModal = true;
+    }
+
+    private async Task SaveDriver()
+    {
+        try
+        {
+            if (isEditing)
+            {
+                // Update driver
+                await Http.PutAsJsonAsync($"api/admin/drivers/{currentDriver.Id}", currentDriver);
+            }
+            else
+            {
+                // Add new driver with password
+                var driverWithPassword = new
+                {
+                    Name = currentDriver.Name,
+                    Email = currentDriver.Email,
+                    Phone = currentDriver.Phone,
+                    LicenseNumber = currentDriver.LicenseNumber,
+                    Status = currentDriver.Status,
+                    Password = newPassword
+                };
+                var response = await Http.PostAsJsonAsync("api/admin/drivers-create", driverWithPassword);
+                if (!response.IsSuccessStatusCode)
+                {
+                     var error = await response.Content.ReadAsStringAsync();
+                     throw new Exception(error);
+                }
+            }
+
+            await LoadDrivers();
+            CloseDriverModal();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteDriver(int id)
+    {
+        if (await JSRuntime.InvokeAsync<bool>("confirm", "Are you sure you want to delete this driver?"))
+        {
+            try
+            {
+                await Http.DeleteAsync($"api/admin/drivers/{id}");
+                await LoadDrivers();
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Error: {ex.Message}";
+            }
+        }
+    }
+
+    private void CloseDriverModal()
+    {
+        showDriverModal = false;
+        currentDriver = new();
+    }
+
+    private string GetStatusBadge(string status)
+    {
+        return status switch
+        {
+            "Active" => "bg-success",
+            "Inactive" => "bg-secondary",
+            "OnLeave" => "bg-warning",
+            _ => "bg-info"
+        };
+    }
+
+    // Sample data for demo
+    private List<DriverDto> GetSampleDrivers()
+    {
+        return new List<DriverDto>
+        {
+            new DriverDto { Id = 1, Name = "John Smith", Email = "john@example.com", Phone = "123-456-7890", LicenseNumber = "DL123456", Status = "Active" },
+            new DriverDto { Id = 2, Name = "Mike Johnson", Email = "mike@example.com", Phone = "987-654-3210", LicenseNumber = "DL654321", Status = "Active" },
+            new DriverDto { Id = 3, Name = "Sarah Williams", Email = "sarah@example.com", Phone = "555-123-4567", LicenseNumber = "DL789012", Status = "OnLeave" }
+        };
+    }
+
+    public class DriverDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Phone { get; set; } = "";
+        public string LicenseNumber { get; set; } = "";
+        public string Status { get; set; } = "Active";
+    }
+}

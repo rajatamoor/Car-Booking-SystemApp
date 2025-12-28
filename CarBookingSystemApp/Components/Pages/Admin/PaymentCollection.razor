@@ -1,0 +1,683 @@
+﻿@page "/admin/paymentcollection"
+
+@using CarBookingSystem.Domain.DTOs
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.JSInterop
+
+@layout MainLayout
+
+@attribute [Authorize(Roles = "Admin")]
+
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Nav
+@inject AuthService Auth
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3><i class="bi bi-cash-coin me-2"></i> Payment Collection (Cash-Based)</h3>
+        <div>
+            <button class="btn btn-outline-success me-2" @onclick="ExportToExcel">
+                <i class="bi bi-file-earmark-excel me-1"></i> Export to Excel
+            </button>
+            <button class="btn btn-primary" @onclick="ShowPaymentModal">
+                <i class="bi bi-plus-circle me-1"></i> Add Manual Payment
+            </button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3 mb-2">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" @bind="selectedStatus">
+                        <option value="">All Payments</option>
+                        <option value="Paid">Paid</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Overdue">Overdue</option>
+                    </select>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="form-label">Payment Method</label>
+                    <select class="form-select" @bind="selectedMethod">
+                        <option value="">All Methods</option>
+                        <option value="Cash">Cash</option>
+                        <option value="CreditCard">Credit Card</option>
+                        <option value="BankTransfer">Bank Transfer</option>
+                    </select>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="form-label">From Date</label>
+                    <input type="date" class="form-control" @bind="fromDate" />
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="form-label">To Date</label>
+                    <input type="date" class="form-control" @bind="toDate" />
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-12 text-end">
+                    <button class="btn btn-outline-secondary me-2" @onclick="ClearFilters">
+                        Clear Filters
+                    </button>
+                    <button class="btn btn-primary" @onclick="ApplyFilters">
+                        Apply Filters
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h6 class="card-title">Total Collected</h6>
+                    <h3>$@totalCollected.ToString("N2")</h3>
+                    <p class="card-text">This Month</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h6 class="card-title">Pending Payments</h6>
+                    <h3>$@pendingAmount.ToString("N2")</h3>
+                    <p class="card-text">Awaiting collection</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-white">
+                <div class="card-body">
+                    <h6 class="card-title">Today's Collection</h6>
+                    <h3>$@todayCollection.ToString("N2")</h3>
+                    <p class="card-text">Cash received today</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h6 class="card-title">Overdue Payments</h6>
+                    <h3>$@overdueAmount.ToString("N2")</h3>
+                    <p class="card-text">Past due date</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Collection Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Payment Records</h5>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading payment records...</p>
+                </div>
+            }
+            else if (payments != null && payments.Any())
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Payment ID</th>
+                                <th>Booking ID</th>
+                                <th>Customer</th>
+                                <th>Driver</th>
+                                <th>Amount</th>
+                                <th>Method</th>
+                                <th>Status</th>
+                                <th>Payment Date</th>
+                                <th>Collected By</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var payment in payments)
+                            {
+                                <tr>
+                                    <td>@payment.Id</td>
+                                    <td>#@payment.BookingId</td>
+                                    <td>@payment.CustomerName</td>
+                                    <td>@payment.DriverName</td>
+                                    <td><strong>$@payment.Amount.ToString("N2")</strong></td>
+                                    <td>
+                                        <span class="badge @GetMethodBadge(payment.PaymentMethod)">
+                                            @payment.PaymentMethod
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge @GetStatusBadge(payment.Status)">
+                                            @payment.Status
+                                        </span>
+                                    </td>
+                                    <td>@payment.PaymentDate.ToString("MM/dd/yyyy")</td>
+                                    <td>@payment.CollectedBy</td>
+                                    <td>
+                                        @if (payment.Status != "Paid")
+                                        {
+                                            <button class="btn btn-sm btn-success me-1" 
+                                                    @onclick="() => MarkAsPaid(payment.Id)">
+                                                <i class="bi bi-check-circle"></i> Mark Paid
+                                            </button>
+                                        }
+                                        <button class="btn btn-sm btn-outline-info" 
+                                                @onclick="() => ViewReceipt(payment.Id)">
+                                            <i class="bi bi-receipt"></i> Receipt
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-3">
+                    <div>Showing @payments.Count payments</div>
+                    <div class="pagination">
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="PreviousPage" 
+                                disabled="@(currentPage <= 1)">
+                            <i class="bi bi-chevron-left"></i> Previous
+                        </button>
+                        <span class="mx-2">Page @currentPage</span>
+                        <button class="btn btn-sm btn-outline-primary ms-1" @onclick="NextPage">
+                            Next <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i> No payment records found.
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- Add Payment Modal -->
+@if (showPaymentModal)
+{
+    <div class="modal show d-block" tabindex="-1" role="dialog" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-cash-coin me-1"></i> Record Manual Payment
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="ClosePaymentModal"></button>
+                </div>
+                <div class="modal-body">
+                    <form>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Booking ID *</label>
+                                <input type="number" class="form-control" @bind="newPayment.BookingId" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Customer Name *</label>
+                                <input type="text" class="form-control" @bind="newPayment.CustomerName" />
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Amount *</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" class="form-control" step="0.01" @bind="newPayment.Amount" />
+                                </div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Payment Method *</label>
+                                <select class="form-select" @bind="newPayment.PaymentMethod">
+                                    <option value="Cash">Cash</option>
+                                    <option value="CreditCard">Credit Card</option>
+                                    <option value="BankTransfer">Bank Transfer</option>
+                                    <option value="MobilePayment">Mobile Payment</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Payment Date *</label>
+                                <input type="date" class="form-control" @bind="newPayment.PaymentDate" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Collected By *</label>
+                                <input type="text" class="form-control" @bind="newPayment.CollectedBy" />
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Notes</label>
+                            <textarea class="form-control" rows="3" @bind="newPayment.Notes"></textarea>
+                        </div>
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger">@errorMessage</div>
+                        }
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="ClosePaymentModal">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" @onclick="SavePayment">
+                        <i class="bi bi-save me-1"></i> Save Payment
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Receipt Modal -->
+@if (showReceiptModal && selectedPayment != null)
+{
+    <div class="modal show d-block" tabindex="-1" role="dialog" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-receipt me-1"></i> Payment Receipt
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseReceiptModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-4">
+                        <h4>Car Booking System</h4>
+                        <p class="text-muted">Payment Receipt</p>
+                    </div>
+                    
+                    <div class="receipt-details">
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Receipt No:</strong></div>
+                            <div class="col-6">@selectedPayment.Id</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Booking ID:</strong></div>
+                            <div class="col-6">#@selectedPayment.BookingId</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Customer:</strong></div>
+                            <div class="col-6">@selectedPayment.CustomerName</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Amount:</strong></div>
+                            <div class="col-6"><h5 class="text-success">$@selectedPayment.Amount.ToString("N2")</h5></div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Payment Method:</strong></div>
+                            <div class="col-6">@selectedPayment.PaymentMethod</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Payment Date:</strong></div>
+                            <div class="col-6">@selectedPayment.PaymentDate.ToString("MM/dd/yyyy hh:mm tt")</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Collected By:</strong></div>
+                            <div class="col-6">@selectedPayment.CollectedBy</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6"><strong>Status:</strong></div>
+                            <div class="col-6">
+                                <span class="badge @GetStatusBadge(selectedPayment.Status)">
+                                    @selectedPayment.Status
+                                </span>
+                            </div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(selectedPayment.Notes))
+                        {
+                            <div class="row mb-2">
+                                <div class="col-12">
+                                    <strong>Notes:</strong>
+                                    <p class="mt-1">@selectedPayment.Notes</p>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    
+                    <hr class="my-4" />
+                    
+                    <div class="text-center text-muted">
+                        <small>Thank you for your payment!</small>
+                        <p class="mt-2">Generated on @DateTime.Now.ToString("MM/dd/yyyy hh:mm tt")</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseReceiptModal">
+                        Close
+                    </button>
+                    <button type="button" class="btn btn-primary" @onclick="PrintReceipt">
+                        <i class="bi bi-printer me-1"></i> Print Receipt
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    
+    private List<PaymentDto> payments = new();
+    private PaymentDto? selectedPayment;
+    private bool isLoading = true;
+    private bool showPaymentModal = false;
+    private bool showReceiptModal = false;
+    private int currentPage = 1;
+    private string errorMessage = "";
+    
+    // Filter variables
+    private string selectedStatus = "";
+    private string selectedMethod = "";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    
+    // Stats
+    private decimal totalCollected = 15250.75m;
+    private decimal pendingAmount = 3250.50m;
+    private decimal todayCollection = 1250.00m;
+    private decimal overdueAmount = 850.25m;
+    
+    private PaymentDto newPayment = new PaymentDto
+    {
+        PaymentDate = DateTime.Now,
+        PaymentMethod = "Cash",
+        Status = "Paid"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPayments();
+        CalculateStats();
+    }
+
+    private async Task LoadPayments()
+    {
+        isLoading = true;
+        try
+        {
+            // In real app, call API: await Http.GetFromJsonAsync<List<PaymentDto>>("api/admin/payments")
+            // For demo, use sample data
+            payments = GetSamplePayments();
+            
+            // Apply filters
+            if (!string.IsNullOrEmpty(selectedStatus))
+            {
+                payments = payments.Where(p => p.Status == selectedStatus).ToList();
+            }
+            
+            if (!string.IsNullOrEmpty(selectedMethod))
+            {
+                payments = payments.Where(p => p.PaymentMethod == selectedMethod).ToList();
+            }
+            
+            if (fromDate.HasValue)
+            {
+                payments = payments.Where(p => p.PaymentDate >= fromDate.Value).ToList();
+            }
+            
+            if (toDate.HasValue)
+            {
+                payments = payments.Where(p => p.PaymentDate <= toDate.Value.AddDays(1)).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading payments: {ex.Message}";
+            payments = GetSamplePayments();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void CalculateStats()
+    {
+        // Calculate stats from payments data
+        totalCollected = payments.Where(p => p.Status == "Paid").Sum(p => p.Amount);
+        pendingAmount = payments.Where(p => p.Status == "Pending").Sum(p => p.Amount);
+        todayCollection = payments
+            .Where(p => p.Status == "Paid" && p.PaymentDate.Date == DateTime.Today)
+            .Sum(p => p.Amount);
+        overdueAmount = payments
+            .Where(p => p.Status == "Overdue")
+            .Sum(p => p.Amount);
+    }
+
+    private void ShowPaymentModal()
+    {
+        newPayment = new PaymentDto
+        {
+            PaymentDate = DateTime.Now,
+            PaymentMethod = "Cash",
+            Status = "Paid",
+            CollectedBy = Auth.UserName
+        };
+        showPaymentModal = true;
+        errorMessage = "";
+    }
+
+    private async Task SavePayment()
+    {
+        if (newPayment.Amount <= 0)
+        {
+            errorMessage = "Amount must be greater than 0";
+            return;
+        }
+        
+        if (string.IsNullOrEmpty(newPayment.CustomerName))
+        {
+            errorMessage = "Customer name is required";
+            return;
+        }
+        
+        try
+        {
+            // In real app: await Http.PostAsJsonAsync("api/admin/payments", newPayment);
+            newPayment.Id = payments.Max(p => p.Id) + 1;
+            payments.Insert(0, newPayment);
+            
+            CalculateStats();
+            ClosePaymentModal();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving payment: {ex.Message}";
+        }
+    }
+
+    private async Task MarkAsPaid(int paymentId)
+    {
+        if (await JSRuntime.InvokeAsync<bool>("confirm", 
+            "Are you sure you want to mark this payment as paid? This action cannot be undone."))
+        {
+            try
+            {
+                // In real app: await Http.PutAsync($"api/admin/payments/{paymentId}/markpaid", null);
+                var payment = payments.FirstOrDefault(p => p.Id == paymentId);
+                if (payment != null)
+                {
+                    payment.Status = "Paid";
+                    payment.PaymentDate = DateTime.Now;
+                    payment.CollectedBy = Auth.UserName;
+                    
+                    CalculateStats();
+                    StateHasChanged();
+                }
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Error: {ex.Message}";
+            }
+        }
+    }
+
+    private void ViewReceipt(int paymentId)
+    {
+        selectedPayment = payments.FirstOrDefault(p => p.Id == paymentId);
+        if (selectedPayment != null)
+        {
+            showReceiptModal = true;
+        }
+    }
+
+    private async Task PrintReceipt()
+    {
+        await JSRuntime.InvokeVoidAsync("print");
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            // Create CSV content
+            var csvContent = "Payment ID,Booking ID,Customer,Driver,Amount,Method,Status,Payment Date,Collected By\n";
+            foreach (var payment in payments)
+            {
+                csvContent += $"{payment.Id},{payment.BookingId},{payment.CustomerName},{payment.DriverName}," +
+                            $"{payment.Amount},{payment.PaymentMethod},{payment.Status}," +
+                            $"{payment.PaymentDate:MM/dd/yyyy},{payment.CollectedBy}\n";
+            }
+            
+            // Convert to base64
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csvContent);
+            var base64 = Convert.ToBase64String(bytes);
+            
+            // Trigger download
+            await JSRuntime.InvokeVoidAsync("downloadFile", 
+                $"payments_{DateTime.Now:yyyyMMdd}.csv", 
+                "data:text/csv;base64," + base64);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error exporting: {ex.Message}";
+        }
+    }
+
+    private async Task ApplyFilters()
+    {
+        currentPage = 1;
+        await LoadPayments();
+    }
+
+    private async Task ClearFilters()
+    {
+        selectedStatus = "";
+        selectedMethod = "";
+        fromDate = null;
+        toDate = null;
+        await ApplyFilters();
+    }
+
+    private void PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            // In real app, load page data from API
+        }
+    }
+
+    private void NextPage()
+    {
+        currentPage++;
+        // In real app, load page data from API
+    }
+
+    private void ClosePaymentModal()
+    {
+        showPaymentModal = false;
+        newPayment = new PaymentDto();
+    }
+
+    private void CloseReceiptModal()
+    {
+        showReceiptModal = false;
+        selectedPayment = null;
+    }
+
+    private string GetStatusBadge(string status)
+    {
+        return status switch
+        {
+            "Paid" => "bg-success",
+            "Pending" => "bg-warning",
+            "Overdue" => "bg-danger",
+            "Cancelled" => "bg-secondary",
+            _ => "bg-info"
+        };
+    }
+
+    private string GetMethodBadge(string method)
+    {
+        return method switch
+        {
+            "Cash" => "bg-success",
+            "CreditCard" => "bg-primary",
+            "BankTransfer" => "bg-info",
+            "MobilePayment" => "bg-purple",
+            _ => "bg-secondary"
+        };
+    }
+
+    // Sample data for demo
+    private List<PaymentDto> GetSamplePayments()
+    {
+        return new List<PaymentDto>
+        {
+            new PaymentDto { Id = 1, BookingId = 101, CustomerName = "John Doe", DriverName = "Mike Johnson", 
+                           Amount = 125.50m, PaymentMethod = "Cash", Status = "Paid", 
+                           PaymentDate = DateTime.Now.AddDays(-1), CollectedBy = "Admin User" },
+            new PaymentDto { Id = 2, BookingId = 102, CustomerName = "Jane Smith", DriverName = "Sarah Williams", 
+                           Amount = 85.00m, PaymentMethod = "CreditCard", Status = "Pending", 
+                           PaymentDate = DateTime.Now.AddDays(-2), CollectedBy = "Admin User" },
+            new PaymentDto { Id = 3, BookingId = 103, CustomerName = "Bob Wilson", DriverName = "John Smith", 
+                           Amount = 150.00m, PaymentMethod = "Cash", Status = "Paid", 
+                           PaymentDate = DateTime.Today, CollectedBy = "Admin User" },
+            new PaymentDto { Id = 4, BookingId = 104, CustomerName = "Alice Brown", DriverName = "Mike Johnson", 
+                           Amount = 95.75m, PaymentMethod = "BankTransfer", Status = "Overdue", 
+                           PaymentDate = DateTime.Now.AddDays(-5), CollectedBy = "" },
+            new PaymentDto { Id = 5, BookingId = 105, CustomerName = "Charlie Davis", DriverName = "Sarah Williams", 
+                           Amount = 200.00m, PaymentMethod = "Cash", Status = "Paid", 
+                           PaymentDate = DateTime.Now.AddDays(-3), CollectedBy = "Admin User" },
+            new PaymentDto { Id = 6, BookingId = 106, CustomerName = "Emma Wilson", DriverName = "John Smith", 
+                           Amount = 75.25m, PaymentMethod = "MobilePayment", Status = "Pending", 
+                           PaymentDate = DateTime.Now.AddDays(-1), CollectedBy = "" },
+            new PaymentDto { Id = 7, BookingId = 107, CustomerName = "David Miller", DriverName = "Mike Johnson", 
+                           Amount = 120.00m, PaymentMethod = "Cash", Status = "Paid", 
+                           PaymentDate = DateTime.Today, CollectedBy = "Admin User" },
+            new PaymentDto { Id = 8, BookingId = 108, CustomerName = "Sophia Garcia", DriverName = "Sarah Williams", 
+                           Amount = 180.50m, PaymentMethod = "CreditCard", Status = "Paid", 
+                           PaymentDate = DateTime.Now.AddDays(-4), CollectedBy = "Admin User" }
+        };
+    }
+
+    public class PaymentDto
+    {
+        public int Id { get; set; }
+        public int BookingId { get; set; }
+        public string CustomerName { get; set; } = "";
+        public string DriverName { get; set; } = "";
+        public decimal Amount { get; set; }
+        public string PaymentMethod { get; set; } = "Cash";
+        public string Status { get; set; } = "Pending";
+        public DateTime PaymentDate { get; set; } = DateTime.Now;
+        public string CollectedBy { get; set; } = "";
+        public string Notes { get; set; } = "";
+    }
+}

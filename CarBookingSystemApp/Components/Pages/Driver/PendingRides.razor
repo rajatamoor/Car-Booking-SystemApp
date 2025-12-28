@@ -1,0 +1,225 @@
+﻿@page "/driver/pendingrides"
+@using CarBookingSystem.Domain.DTOs
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+@layout MainLayout
+@attribute [Authorize(Roles = "Driver")]
+@inject AuthService Auth
+@inject BookingService BookingService
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3>Available Rides</h3>
+        <button class="btn btn-outline-primary" @onclick="LoadPendingRides" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-2"></span>
+            }
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+
+    @if (errorMessage != null)
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null" aria-label="Close"></button>
+        </div>
+    }
+    
+    @if (successMessage != null)
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            @successMessage
+            <button type="button" class="btn-close" @onclick="() => successMessage = null" aria-label="Close"></button>
+        </div>
+    }
+
+    @if (isLoading && pendingRides == null)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (pendingRides != null && pendingRides.Any())
+    {
+        <div class="row g-4">
+            @foreach (var ride in pendingRides)
+            {
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card h-100 shadow-sm border-0">
+                        <div class="card-header bg-white border-bottom-0 pt-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="badge bg-warning text-dark">@ride.Status</span>
+                                <small class="text-muted">@ride.Date.ToString("MMM dd, HH:mm")</small>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="card-title text-primary mb-3">
+                                <i class="bi bi-person-circle me-2"></i>@ride.CustomerName
+                            </h5>
+                            
+                            <div class="mb-3">
+                                <div class="d-flex align-items-center mb-2">
+                                    <i class="bi bi-geo-alt-fill text-success me-2"></i>
+                                    <div>
+                                        <small class="text-muted d-block">Pickup</small>
+                                        <strong>@ride.Pickup</strong>
+                                    </div>
+                                </div>
+                                <div class="border-start border-2 ms-2 ps-3 my-1" style="height: 15px; border-color: #dee2e6 !important;"></div>
+                                <div class="d-flex align-items-center">
+                                    <i class="bi bi-geo-alt-fill text-danger me-2"></i>
+                                    <div>
+                                        <small class="text-muted d-block">Dropoff</small>
+                                        <strong>@ride.Dropoff</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr />
+
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="text-muted"><i class="bi bi-car-front me-1"></i> Car</span>
+                                <span>
+                                    @if (!string.IsNullOrEmpty(ride.CarMake))
+                                    {
+                                        @($"{ride.CarMake} {ride.CarModel}")
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted fst-italic">Any Car</span>
+                                    }
+                                </span>
+                            </div>
+                            
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-muted"><i class="bi bi-currency-dollar me-1"></i> Fare</span>
+                                <span class="fs-5 fw-bold text-success">$@ride.Amount</span>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-white border-top-0 pb-3">
+                            <button class="btn btn-primary w-100" 
+                                    @onclick="() => AcceptRide(ride.Id)" 
+                                    disabled="@processingIds.Contains(ride.Id)">
+                                @if (processingIds.Contains(ride.Id))
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2"></span>
+                                    <span>Accepting...</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-check-circle-fill me-2"></i> <span>Accept Ride</span>
+                                }
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="text-center py-5">
+            <div class="bg-light rounded-circle d-inline-flex p-4 mb-3">
+                <i class="bi bi-inbox display-4 text-muted"></i>
+            </div>
+            <h4 class="text-muted">No pending rides</h4>
+            <p class="text-secondary">Check back later for new bookings.</p>
+        </div>
+    }
+</div>
+
+@implements IDisposable
+
+@code {
+    private List<BookingDto> pendingRides;
+    private HashSet<int> processingIds = new();
+    private bool isLoading = false;
+    private string errorMessage;
+    private string successMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPendingRides();
+        
+        await BookingService.InitializeSignalR();
+        BookingService.OnNewBooking += HandleNewBooking;
+        BookingService.OnRideCompleted += HandleRideCompleted;
+    }
+
+    private async void HandleNewBooking(int bookingId)
+    {
+        // Refresh list when a new booking arrives
+        await InvokeAsync(async () => 
+        {
+            await LoadPendingRides();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        BookingService.OnNewBooking -= HandleNewBooking;
+    }
+
+    private async Task LoadPendingRides()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            if (Auth.IsAuthenticated)
+            {
+               pendingRides = await BookingService.GetPendingRides();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Unable to load pending rides. Please try again.";
+            Console.WriteLine($"Error loading rides: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+       BookingService.OnRideCompleted -= HandleRideCompleted; 
+
+    }
+    private async void HandleRideCompleted(int bookingId)
+{
+    // Handle ride completion
+    await LoadPendingRides();
+    StateHasChanged();
+}
+
+    private async Task AcceptRide(int bookingId)
+    {
+        if (processingIds.Contains(bookingId)) return;
+
+        processingIds.Add(bookingId);
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            await BookingService.AcceptRide(Auth.UserId, bookingId);
+            successMessage = "Ride accepted successfully! Check 'Matched Available Rides'.";
+            // Remove the accepted ride locally to avoid full reload flicker, or just reload
+            await LoadPendingRides(); 
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Failed to accept ride. It may have been taken by another driver.";
+            Console.WriteLine($"Error accepting ride: {ex.Message}");
+        }
+        finally
+        {
+            processingIds.Remove(bookingId);
+        }
+    }
+
+}

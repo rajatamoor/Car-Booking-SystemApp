@@ -1,0 +1,214 @@
+﻿@page "/customer/mybookings"
+
+@using CarBookingSystem.Domain.DTOs
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+
+@layout MainLayout
+@attribute [Authorize(Roles = "Customer")]
+
+@inject BookingService BookingService
+@inject AuthService Auth
+@inject NavigationManager Nav
+
+<div class="container-fluid py-4" style="background-color: #f8f9fa; min-height: 100vh;">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-5">
+            <div>
+                <h2 class="fw-bold mb-1" style="color: #2c3e50;">My Journeys</h2>
+                <p class="text-muted mb-0">Track your past and upcoming rides</p>
+            </div>
+            <button class="btn btn-primary d-flex align-items-center gap-2 shadow-sm rounded-pill px-4 py-2" @onclick="NavigateToBook">
+                <i class="bi bi-plus-lg"></i>
+                <span>New Booking</span>
+            </button>
+        </div>
+
+        @if (isLoading)
+        {
+            <div class="d-flex justify-content-center align-items-center" style="min-height: 400px;">
+                <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else if (bookings != null && bookings.Any())
+        {
+            <div class="row g-4">
+                @foreach (var booking in bookings.OrderByDescending(b => b.Date))
+                {
+                    <div class="col-md-6 col-lg-4">
+                        <div class="card h-100 border-0 shadow-sm hover-card transition-all">
+                            <div class="card-body p-4">
+                                <div class="d-flex justify-content-between align-items-start mb-3">
+                                    <div class="d-flex flex-column">
+                                        <span class="fw-bold fs-5 text-dark">$@booking.Amount.ToString("0.00")</span>
+                                        <small class="text-muted">@booking.Date.ToString("MMM dd, yyyy • hh:mm tt")</small>
+                                    </div>
+                                    <span class="badge rounded-pill px-3 py-2 @GetStatusClass(booking.Status)">
+                                        @booking.Status
+                                    </span>
+                                </div>
+
+                                <div class="timeline-container ps-2 mb-4">
+                                    <div class="position-relative pb-3 border-start border-2 ps-4" style="border-color: #e9ecef !important;">
+                                        <div class="position-absolute top-0 start-0 translate-middle rounded-circle bg-success border border-white" style="width: 12px; height: 12px;"></div>
+                                        <small class="text-muted d-block text-uppercase fw-bold" style="font-size: 0.7rem; letter-spacing: 0.5px;">Pickup</small>
+                                        <span class="fw-medium text-dark">@booking.Pickup</span>
+                                    </div>
+                                    <div class="position-relative ps-4 text-start">
+                                        <div class="position-absolute top-0 start-0 translate-middle rounded-circle bg-danger border border-white" style="width: 12px; height: 12px;"></div>
+                                        <small class="text-muted d-block text-uppercase fw-bold" style="font-size: 0.7rem; letter-spacing: 0.5px;">Dropoff</small>
+                                        <span class="fw-medium text-dark">@booking.Dropoff</span>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex align-items-center bg-light rounded-3 p-3">
+                                    @if (!string.IsNullOrEmpty(booking.CarModel))
+                                    {
+                                        <div class="d-flex align-items-center flex-grow-1">
+                                            <div class="rounded-circle bg-white p-2 shadow-sm me-3 text-center" style="width: 40px; height: 40px;">
+                                                <i class="bi bi-car-front-fill text-primary"></i>
+                                            </div>
+                                            <div>
+                                                <div class="fw-bold text-dark">@booking.CarMake @booking.CarModel</div>
+                                                <div class="small text-muted">@booking.CarPlate</div>
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex align-items-center text-muted">
+                                            <i class="bi bi-hourglass-split me-2"></i>
+                                            <small>Car pending assignment</small>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            
+                            @if(!string.IsNullOrEmpty(booking.DriverName))
+                            {
+                                <div class="card-footer bg-white border-top-0 p-4 pt-0">
+                                    <hr class="mt-0 mb-3 text-muted opacity-25" />
+                                    <div class="d-flex align-items-center">
+                                        <div class="bg-primary bg-opacity-10 text-primary rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px;">
+                                            <i class="bi bi-person-fill"></i>
+                                        </div>
+                                        <div>
+                                            <small class="text-muted d-block">Driver</small>
+                                            <span class="fw-medium text-dark">@booking.DriverName</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="text-center py-5">
+                <div class="bg-light rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="bi bi-calendar-x text-muted fs-1"></i>
+                </div>
+                <h3 class="text-dark fw-bold">No bookings yet</h3>
+                <p class="text-muted mb-4">You haven't made any bookings yet. Ready to go somewhere?</p>
+                <button class="btn btn-primary px-5 py-2 rounded-pill shadow-sm" @onclick="NavigateToBook">
+                    Book Your First Ride
+                </button>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .hover-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hover-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 .5rem 1rem rgba(0,0,0,.15)!important;
+    }
+    .transition-all {
+        transition: all 0.3s ease;
+    }
+    
+    .bg-success-soft { background-color: rgba(25, 135, 84, 0.1); color: #198754; }
+    .bg-warning-soft { background-color: rgba(255, 193, 7, 0.1); color: #856404; }
+    .bg-danger-soft { background-color: rgba(220, 53, 69, 0.1); color: #dc3545; }
+    .bg-info-soft { background-color: rgba(13, 202, 240, 0.1); color: #0dcaf0; }
+</style>
+
+@implements IDisposable
+
+@code {
+    private List<BookingDto> bookings = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try 
+        {
+            bookings = await BookingService.GetCustomerBookings(Auth.UserId);
+            
+            await BookingService.InitializeSignalR();
+            BookingService.OnRideAccepted += HandleRideAccepted;
+            BookingService.OnPaymentDone += HandlePaymentDone;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading bookings: {ex.Message}");
+            // Handle error (maybe show toast or message)
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async void HandleRideAccepted(int bookingId, int driverId)
+    {
+        await InvokeAsync(async () =>
+        {
+             // Simple refresh for now. Could be optimized to only update specific item.
+            bookings = await BookingService.GetCustomerBookings(Auth.UserId);
+            StateHasChanged();
+        });
+    }
+
+    private async void HandlePaymentDone(int bookingId)
+    {
+        await InvokeAsync(async () =>
+        {
+            // Refresh bookings to show updated status
+            bookings = await BookingService.GetCustomerBookings(Auth.UserId);
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        BookingService.OnRideAccepted -= HandleRideAccepted;
+        BookingService.OnPaymentDone -= HandlePaymentDone;
+    }
+
+    private void NavigateToBook()
+    {
+        Nav.NavigateTo("/customer/bookride");
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status?.ToLower() switch
+        {
+            "completed" => "bg-success-soft",
+            "paid" => "bg-success-soft",
+            "accepted" => "bg-info-soft",
+            "pending" => "bg-warning-soft",
+            "cancelled" => "bg-danger-soft",
+            _ => "bg-secondary bg-opacity-10 text-secondary"
+        };
+    }
+}

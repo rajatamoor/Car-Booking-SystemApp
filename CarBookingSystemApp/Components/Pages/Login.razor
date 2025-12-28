@@ -1,0 +1,127 @@
+﻿@page "/"
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Components.Authorization
+
+@layout MainLayout
+
+@inject AuthService Auth
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h3>Car Booking System Login</h3>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-control" @bind="email" @onkeypress="HandleKeyPress" />
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-control" @bind="password" @onkeypress="HandleKeyPress" />
+                </div>
+                
+                <button class="btn btn-primary w-100" @onclick="DoLogin" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                    }
+                    Login
+                </button>
+                
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-3">@errorMessage</div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string email = "";
+    private string password = "";
+    private string errorMessage = "";
+    private bool isLoading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Initialize auth service
+        await Auth.InitializeAsync();
+        
+        // If already logged in, redirect to appropriate page
+        if (Auth.IsAuthenticated)
+        {
+            RedirectBasedOnRole();
+        }
+    }
+
+    private async Task DoLogin()
+    {
+        isLoading = true;
+        errorMessage = "";
+        
+        try
+        {
+            if (await Auth.Login(email, password))
+            {
+                // Notify authentication state changed
+                if (AuthState is MauiAuthStateProvider mauiAuth)
+                {
+                    mauiAuth.NotifyUserLogin();
+                }
+                else
+                {
+                    await AuthState.GetAuthenticationStateAsync();
+                }
+                
+                // Redirect based on role
+                RedirectBasedOnRole();
+            }
+            else
+            {
+                errorMessage = "Invalid email or password";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void RedirectBasedOnRole()
+    {
+        switch (Auth.Role)
+        {
+            case "Customer":
+                Nav.NavigateTo("/customer/bookride");
+                break;
+            case "Driver":
+                Nav.NavigateTo("/driver/pendingrides");
+                break;
+            case "Admin":
+                Nav.NavigateTo("/admin/allbookings");
+                break;
+            default:
+                errorMessage = "Unknown role";
+                break;
+        }
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter" || e.Code == "NumpadEnter")
+        {
+            await DoLogin();
+        }
+    }
+}

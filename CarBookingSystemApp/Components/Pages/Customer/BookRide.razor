@@ -1,0 +1,626 @@
+﻿@page "/customer/bookride"
+
+@using CarBookingSystem.Domain
+@using CarBookingSystem.Domain.DTOs
+@using CarBookingSystem.UI.Services
+@using CarBookingSystemApp.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.Extensions.Logging
+
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@inject ILogger<BookRide> Logger
+
+@layout MainLayout
+@attribute [Authorize(Roles = "Customer")]
+
+@inject AuthService Auth
+@inject BookingService BookingService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<div class="container mt-4">
+    <h3>Book a New Ride</h3>
+
+    @if (!isInitialized)
+    {
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading booking system...</p>
+        </div>
+    }
+    else if (showAuthError)
+    {
+        <div class="alert alert-warning">
+            <h5>Authentication Required</h5>
+            <p>You need to be logged in to book a ride.</p>
+            <button class="btn btn-primary" @onclick="GoToLogin">Go to Login</button>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Book Your Ride</h5>
+                        <small class="text-muted">Logged in as: @currentUserName (ID: @currentUserId)</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Pickup Location</label>
+                            <input class="form-control"
+                                   @bind="pickup"
+                                   @oninput='async (e) => await SearchLocations(e.Value?.ToString(), "pickup")'
+                                   placeholder="Type address (min 3 characters)" />
+                            @if (showPickupSuggestions && pickupSuggestions.Any())
+                            {
+                                <div class="list-group mt-1 border" style="position: absolute; z-index: 1000; max-height: 200px; overflow-y: auto; width: calc(100% - 30px);">
+                                    @foreach (var location in pickupSuggestions)
+                                    {
+                                        <button type="button"
+                                                class="list-group-item list-group-item-action text-start"
+                                                @onclick='() => SelectLocation(location.DisplayName, "pickup")'>
+                                            <small>@location.DisplayName</small>
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Dropoff Location</label>
+                            <input class="form-control"
+                                   @bind="dropoff"
+                                   @oninput='async (e) => await SearchLocations(e.Value?.ToString(), "dropoff")'
+                                   placeholder="Type address (min 3 characters)" />
+                            @if (showDropoffSuggestions && dropoffSuggestions.Any())
+                            {
+                                <div class="list-group mt-1 border" style="position: absolute; z-index: 1000; max-height: 200px; overflow-y: auto; width: calc(100% - 30px);">
+                                    @foreach (var location in dropoffSuggestions)
+                                    {
+                                        <button type="button"
+                                                class="list-group-item list-group-item-action text-start"
+                                                @onclick='() => SelectLocation(location.DisplayName, "dropoff")'>
+                                            <small>@location.DisplayName</small>
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Amount ($)</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number"
+                                       class="form-control"
+                                       @bind="amount"
+                                       @bind:event="oninput"
+                                       min="5"
+                                       max="500"
+                                       step="0.01" />
+                            </div>
+                            <small class="text-muted">Enter ride fare (min $5, max $500)</small>
+                        </div>
+
+                        <button class="btn btn-success w-100"
+                                @onclick="BookRideHandler"
+                                disabled="@(isBooking || string.IsNullOrEmpty(pickup) || string.IsNullOrEmpty(dropoff) || amount <= 0)">
+                            @if (isBooking)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            <i class="bi bi-car-front me-2"></i>Book Ride
+                        </button>
+
+                        @if (!string.IsNullOrEmpty(bookingMessage))
+                        {
+                            <div class="alert @(bookingMessage.Contains("successfully") ? "alert-success" : "alert-danger") mt-3">
+                                @bookingMessage
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>My Recent Bookings</h5>
+                        <button class="btn btn-sm btn-primary float-end" @onclick="LoadMyBookings" disabled="@isLoading">
+                            @if (isLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                        @if (myBookings != null && myBookings.Any())
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>From</th>
+                                            <th>To</th>
+                                            <th>Status</th>
+                                            <th>Amount</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var booking in myBookings.OrderByDescending(b => b.Date).Take(5))
+                                        {
+                                            <tr>
+                                                <td title="@booking.Pickup">
+                                                    <small>@Truncate(booking.Pickup, 15)</small>
+                                                </td>
+                                                <td title="@booking.Dropoff">
+                                                    <small>@Truncate(booking.Dropoff, 15)</small>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-@GetStatusBadge(booking.Status)">
+                                                        @booking.Status
+                                                    </span>
+                                                </td>
+                                                <td>$@booking.Amount.ToString("F2")</td>
+                                                <td>
+                                                    <small>@booking.Date.ToString("MM/dd HH:mm")</small>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="text-muted">No bookings found.</p>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string pickup = "";
+    private string dropoff = "";
+    private decimal amount = 25.00m;
+    private List<BookingDto> myBookings = new();
+    private List<LocationSuggestionDto> pickupSuggestions = new();
+    private List<LocationSuggestionDto> dropoffSuggestions = new();
+    private bool showPickupSuggestions = false;
+    private bool showDropoffSuggestions = false;
+    private bool isLoading = false;
+    private bool isBooking = false;
+    private string bookingMessage = "";
+    private CancellationTokenSource searchTokenSource = new();
+    private bool isDisposed = false;
+    private bool isInitialized = false;
+    private bool showAuthError = false;
+    private int currentUserId = 0;
+    private string currentUserName = "";
+    private string currentUserRole = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Logger.LogInformation("BookRide page initializing...");
+
+            // Initialize auth service
+            await Auth.InitializeAsync();
+
+            // Check authentication state
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            Logger.LogInformation($"User authenticated: {user.Identity.IsAuthenticated}");
+
+            if (user.Identity.IsAuthenticated)
+            {
+                // Try to get user ID from multiple sources
+                currentUserId = await GetUserIdFromClaims(user);
+
+                if (currentUserId <= 0)
+                {
+                    // Try from Auth service
+                    currentUserId = await Auth.GetCurrentUserIdAsync();
+                }
+
+                currentUserName = user.Identity.Name ?? Auth.UserName;
+                currentUserRole = user.FindFirst(ClaimTypes.Role)?.Value ?? Auth.Role;
+
+                Logger.LogInformation($"Current user - ID: {currentUserId}, Name: {currentUserName}, Role: {currentUserRole}");
+
+                if (currentUserId > 0)
+                {
+                    await LoadMyBookings();
+                    await BookingService.InitializeSignalR();
+
+                    // Subscribe to SignalR events
+                    BookingService.OnNewBooking += HandleNewBooking;
+                    BookingService.OnRideAccepted += HandleRideAccepted;
+                    BookingService.OnPaymentDone += HandlePaymentDone;
+                    BookingService.OnRideCompleted += HandleRideCompleted;
+
+                    isInitialized = true;
+                }
+                else
+                {
+                    showAuthError = true;
+                    bookingMessage = "Unable to retrieve user information. Please log in again.";
+                    Logger.LogWarning("User authenticated but ID is 0");
+                }
+            }
+            else
+            {
+                showAuthError = true;
+                bookingMessage = "Please log in to book a ride.";
+                Logger.LogWarning("User not authenticated");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error initializing BookRide page");
+            bookingMessage = $"Error initializing: {ex.Message}";
+            showAuthError = true;
+        }
+        finally
+        {
+            if (!isInitialized)
+            {
+                isInitialized = true;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task<int> GetUserIdFromClaims(ClaimsPrincipal user)
+    {
+        try
+        {
+            Logger.LogInformation("Getting user ID from claims...");
+
+            // Try different claim types
+            var userIdClaim = user.FindFirst("userId")?.Value
+                ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? user.FindFirst("sub")?.Value
+                ?? user.FindFirst("nameid")?.Value;
+
+            Logger.LogInformation($"Found user ID claim: {userIdClaim}");
+
+            if (!string.IsNullOrEmpty(userIdClaim) && int.TryParse(userIdClaim, out int userId))
+            {
+                Logger.LogInformation($"Parsed user ID: {userId}");
+                return userId;
+            }
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error getting user ID from claims");
+            return 0;
+        }
+    }
+
+    private async Task SearchLocations(string query, string type)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Length < 3)
+        {
+            ClearSuggestions(type);
+            return;
+        }
+
+        // Cancel previous search
+        searchTokenSource?.Cancel();
+        searchTokenSource?.Dispose();
+        searchTokenSource = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(300, searchTokenSource.Token);
+
+            var locations = await BookingService.GetLocationSuggestions(query);
+
+            if (type == "pickup")
+            {
+                pickupSuggestions = locations;
+                showPickupSuggestions = locations.Any();
+            }
+            else
+            {
+                dropoffSuggestions = locations;
+                showDropoffSuggestions = locations.Any();
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException)
+        {
+            // Search was cancelled - ignore
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Location search error: {ex.Message}");
+        }
+    }
+
+    private void SelectLocation(string location, string type)
+    {
+        if (type == "pickup")
+        {
+            pickup = location;
+            pickupSuggestions.Clear();
+            showPickupSuggestions = false;
+        }
+        else
+        {
+            dropoff = location;
+            dropoffSuggestions.Clear();
+            showDropoffSuggestions = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private void ClearSuggestions(string type)
+    {
+        if (type == "pickup")
+        {
+            pickupSuggestions.Clear();
+            showPickupSuggestions = false;
+        }
+        else
+        {
+            dropoffSuggestions.Clear();
+            showDropoffSuggestions = false;
+        }
+    }
+
+    private async Task BookRideHandler()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(pickup) || string.IsNullOrWhiteSpace(dropoff) || amount < 5)
+            {
+                bookingMessage = "Please enter valid pickup, dropoff locations and amount (minimum $5).";
+                return;
+            }
+
+            // Get current user ID
+            if (currentUserId <= 0)
+            {
+                currentUserId = await GetCurrentUserId();
+
+                if (currentUserId <= 0)
+                {
+                    bookingMessage = "Please log in to book a ride. (User ID not found)";
+                    Logger.LogWarning($"User ID is 0. Auth.UserId = {Auth.UserId}");
+                    return;
+                }
+            }
+
+            isBooking = true;
+            bookingMessage = "";
+
+            Logger.LogInformation($"Booking ride for UserId: {currentUserId}");
+            Logger.LogInformation($"Pickup: {pickup}");
+            Logger.LogInformation($"Dropoff: {dropoff}");
+            Logger.LogInformation($"Amount: {amount}");
+
+            var bookingRequest = new BookRideRequest
+            {
+                CustomerId = currentUserId,
+                Pickup = pickup,
+                Dropoff = dropoff,
+                Amount = amount
+            };
+
+            Logger.LogInformation($"Booking request: {System.Text.Json.JsonSerializer.Serialize(bookingRequest)}");
+
+            var bookedRide = await BookingService.BookRide(bookingRequest);
+
+            if (bookedRide != null)
+            {
+                bookingMessage = "Ride booked successfully! Waiting for driver...";
+
+                // Clear form
+                pickup = "";
+                dropoff = "";
+                amount = 25.00m;
+
+                await LoadMyBookings();
+            }
+            else
+            {
+                bookingMessage = "Failed to book ride. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Booking error: {ex.Message}");
+            bookingMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isBooking = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<int> GetCurrentUserId()
+    {
+        try
+        {
+            // Method 1: Try from Auth service
+            if (Auth.UserId > 0)
+            {
+                Logger.LogInformation($"Got UserId from AuthService: {Auth.UserId}");
+                return Auth.UserId;
+            }
+
+            // Method 2: Try to get from authentication state
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (user.Identity.IsAuthenticated)
+            {
+                Logger.LogInformation("User is authenticated. Checking claims...");
+
+                foreach (var claim in user.Claims)
+                {
+                    Logger.LogInformation($"  Claim: {claim.Type} = {claim.Value}");
+                }
+
+                var userIdClaim = user.FindFirst("userId")?.Value
+                    ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? user.FindFirst("sub")?.Value
+                    ?? user.FindFirst("nameid")?.Value;
+
+                Logger.LogInformation($"Found userIdClaim: {userIdClaim}");
+
+                if (int.TryParse(userIdClaim, out int userId))
+                {
+                    Logger.LogInformation($"Parsed UserId from claims: {userId}");
+                    return userId;
+                }
+            }
+            else
+            {
+                Logger.LogWarning("User is NOT authenticated in GetCurrentUserId");
+            }
+
+            Logger.LogWarning("Could not get UserId from any method");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error getting user ID");
+            return 0;
+        }
+    }
+
+    private async Task LoadMyBookings()
+    {
+        if (currentUserId <= 0)
+        {
+            currentUserId = await GetCurrentUserId();
+
+            if (currentUserId <= 0)
+            {
+                bookingMessage = "Cannot load bookings: User not authenticated";
+                return;
+            }
+        }
+
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            myBookings = await BookingService.GetCustomerBookings(currentUserId);
+            Logger.LogInformation($"Loaded {myBookings.Count} bookings for user {currentUserId}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Error loading bookings: {ex.Message}");
+            bookingMessage = "Error loading your bookings.";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async void HandleRideAccepted(int bookingId, int driverId)
+    {
+        await InvokeAsync(async () =>
+        {
+            bookingMessage = "Driver accepted your ride!";
+            await LoadMyBookings();
+            StateHasChanged();
+        });
+    }
+
+    private async void HandlePaymentDone(int bookingId)
+    {
+        await InvokeAsync(async () =>
+        {
+            bookingMessage = "Payment completed for your ride!";
+            await LoadMyBookings();
+            StateHasChanged();
+        });
+    }
+
+    private async void HandleRideCompleted(int bookingId)
+    {
+        await InvokeAsync(async () =>
+        {
+            bookingMessage = "Ride completed successfully!";
+            await LoadMyBookings();
+            StateHasChanged();
+        });
+    }
+
+    private async void HandleNewBooking(int bookingId)
+    {
+        await InvokeAsync(async () =>
+        {
+            await LoadMyBookings();
+            StateHasChanged();
+        });
+    }
+
+    private string GetStatusBadge(String status)
+    {
+        return status switch
+        {
+            "Pending" => "warning",
+            "Accepted" => "info",
+            "Completed" => "primary",
+            "Paid" => "success",
+            "Cancelled" => "danger",
+            _ => "secondary"
+        };
+    }
+
+    private string Truncate(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        return text.Length <= maxLength ? text : text.Substring(0, maxLength) + "...";
+    }
+
+    private void GoToLogin()
+    {
+        Nav.NavigateTo("/login");
+    }
+
+    public void Dispose()
+    {
+        if (!isDisposed)
+        {
+            isDisposed = true;
+
+            // Cancel and dispose search token source
+            searchTokenSource?.Cancel();
+            searchTokenSource?.Dispose();
+
+            // Unsubscribe from events
+            BookingService.OnRideAccepted -= HandleRideAccepted;
+            BookingService.OnPaymentDone -= HandlePaymentDone;
+            BookingService.OnRideCompleted -= HandleRideCompleted;
+            BookingService.OnNewBooking -= HandleNewBooking;
+        }
+    }
+}
